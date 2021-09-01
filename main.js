@@ -101,11 +101,21 @@ async function main() {
             throw new Error("no matching workflow run found")
         }
 
-        let artifacts = await client.paginate(client.actions.listWorkflowRunArtifacts, {
-            owner: owner,
-            repo: repo,
-            run_id: runID,
-        })
+        let artifacts
+
+        try {
+            artifacts = await retry(async () => {
+              return client.paginate(client.actions.listWorkflowRunArtifacts, {
+                    owner: owner,
+                    repo: repo,
+                    run_id: runID,
+                })
+            }, null, {retriesMax: 10, interval: 100, exponential: true, factor: 3, jitter: 100})
+
+            console.log(artifacts) // output : OK
+        } catch (err) {
+            console.log('The function execution failed !')
+        }
 
         // One artifact or all if `name` input is not specified.
         if (name) {
@@ -124,12 +134,22 @@ async function main() {
 
             console.log(`==> Downloading: ${artifact.name}.zip (${size})`)
 
-            const zip = await client.actions.downloadArtifact({
-                owner: owner,
-                repo: repo,
-                artifact_id: artifact.id,
-                archive_format: "zip",
-            })
+            let zip
+
+            try {
+                zip = await retry(async () => {
+                  return client.actions.downloadArtifact({
+                        owner: owner,
+                        repo: repo,
+                        artifact_id: artifact.id,
+                        archive_format: "zip",
+                    })
+                }, null, {retriesMax: 10, interval: 100, exponential: true, factor: 3, jitter: 100})
+
+                console.log(zip) // output : OK
+            } catch (err) {
+                console.log('The function execution failed !')
+            }
 
             const dir = name ? path : pathname.join(path, artifact.name)
 
