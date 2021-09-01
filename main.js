@@ -3,7 +3,9 @@ const github = require('@actions/github')
 const AdmZip = require('adm-zip')
 const filesize = require('filesize')
 const pathname = require('path')
+const retry = require('async-retry')
 const fs = require('fs')
+import {bail} from 'bail'
 
 async function main() {
     try {
@@ -101,51 +103,65 @@ async function main() {
             throw new Error("no matching workflow run found")
         }
 
-        let artifacts = await client.paginate(client.actions.listWorkflowRunArtifacts, {
-            owner: owner,
-            repo: repo,
-            run_id: runID,
-        })
+        // let artifacts
 
-        // One artifact or all if `name` input is not specified.
-        if (name) {
-            artifacts = artifacts.filter((artifact) => {
-                return artifact.name == name
-            })
-        }
+        await retry(
+            async (bail) => {
+              // if anything throws, we retry
+              let artifacts = await retry(async () => {
+                return client.paginate(client.actions.listWorkflowRunArtifacts, {
+                      owner: owner,
+                      repo: repo,
+                      run_id: runID,
+                  })
+              }, null, {retriesMax: 10, interval: 100, exponential: true, factor: 3, jitter: 100})
 
-        if (artifacts.length == 0)
-            throw new Error("no artifacts found")
+              console.log(artifacts) // output : OK
 
-        for (const artifact of artifacts) {
-            console.log("==> Artifact:", artifact.id)
+              // One artifact or all if `name` input is not specified.
+              if (name) {
+                  artifacts = artifacts.filter((artifact) => {
+                      return artifact.name == name
+                  })
+              }
 
-            const size = filesize(artifact.size_in_bytes, { base: 10 })
+              if (artifacts.length == 0)
+                bail(new Error("no artifacts found"))
 
-            console.log(`==> Downloading: ${artifact.name}.zip (${size})`)
+            for (const artifact of artifacts) {
+                console.log("==> Artifact:", artifact.id)
 
-            const zip = await client.actions.downloadArtifact({
-                owner: owner,
-                repo: repo,
-                artifact_id: artifact.id,
-                archive_format: "zip",
-            })
+                const size = filesize(artifact.size_in_bytes, { base: 10 })
 
-            const dir = name ? path : pathname.join(path, artifact.name)
+                console.log(`==> Downloading: ${artifact.name}.zip (${size})`)
 
-            fs.mkdirSync(dir, { recursive: true })
+                let zip = await client.actions.downloadArtifact({
+                            owner: owner,
+                            repo: repo,
+                            artifact_id: artifact.id,
+                            archive_format: "zip",
+                        })
 
-            const adm = new AdmZip(Buffer.from(zip.data))
+                const dir = name ? path : pathname.join(path, artifact.name)
 
-            adm.getEntries().forEach((entry) => {
-                const action = entry.isDirectory ? "creating" : "inflating"
-                const filepath = pathname.join(dir, entry.entryName)
+                fs.mkdirSync(dir, { recursive: true })
 
-                console.log(`  ${action}: ${filepath}`)
-            })
+                const adm = new AdmZip(Buffer.from(zip.data))
 
-            adm.extractAllTo(dir, true)
-        }
+                adm.getEntries().forEach((entry) => {
+                    const action = entry.isDirectory ? "creating" : "inflating"
+                    const filepath = pathname.join(dir, entry.entryName)
+
+                    console.log(`  ${action}: ${filepath}`)
+                })
+
+                adm.extractAllTo(dir, true)
+                }
+            },
+            {
+              retries: 5,
+            }
+          );
     } catch (error) {
         core.setFailed(error.message)
     }

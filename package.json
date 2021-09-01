@@ -5,6 +5,9 @@
     "@actions/core": "^1.3.0",
     "@actions/github": "^5.0.0",
     "adm-zip": "^0.5.5",
+    "async-await-retry": "^1.2.3",
+    "async-retry": "^1.3.3",
+    "bail": "^2.0.1",
     "filesize": "^6.2.2"
   }
 }
